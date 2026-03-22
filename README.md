@@ -1,16 +1,44 @@
 # devtools
 
-Lightweight zsh helpers for inspecting local dev servers.
+Every time I got back to work I'd find mysterious localhost stuff still running. 
+
+If I have to keep track of what's running and on which port, and then politely shut down everything I don't need for the day, forget it. I'm not doing that.
+
+The usual answer is lsof minus something then ps fp then more stuff etc. I can't believe engineers live like this. Those words don't even make sense.
+
+I just want to answer “what's running and where is it coming from?”
+
+There are tools like pstree, but honestly they show way more than I need. I just wanted to take a quick look to see: which projects have active development servers, which tool started them, and a link to open them.
+
+So instead I wrote three little shell functions. Elegant. Simple. Chef's kiss.
+
+They're yours to use if you fancy.
+
+![devwho in action](screenshot.png)
 
 ## Commands
 
-- **`devview`** — Lists listening TCP servers and common dev processes (Vite, Next, esbuild, etc.)
-- **`devwho`** — Shows a table of dev servers on tracked ports (3000, 5173, 8080, 8081) with the tool that launched them (Claude, Cursor, Ghostty, tmux, etc.)
+- **`devwho`** — One table with everything: port, process, which tool launched it (Claude, Collaborator, Cursor, Ghostty, tmux), project name, subfolder path, and a clickable localhost URL.
+- **`devkill`** — Kill dev servers by port (`devkill 5173`), by project name (`devkill branding-oracle`), or pick from a list (`devkill`).
+- **`devview`** — Raw `lsof` + `ps` dump for when you need the deeper look.
+
+### Example
+
+```
+$ devwho
+┌──────┬───────┬──────────────┬──────────────────────┬────────────┬───────────────────────┐
+│ PORT │ PID   │ TOOL         │ PROJECT              │ PATH       │ URL                   │
+├──────┼───────┼──────────────┼──────────────────────┼────────────┼───────────────────────┤
+│ 8080 │ 25058 │ Collaborator │ surfaceandlogic-demo │ .          │ http://localhost:8080 │
+│ 5173 │ 25425 │ Collaborator │ branding-oracle      │ app/client │ http://localhost:5173 │
+│ 3001 │ 25427 │ Collaborator │ branding-oracle      │ app/server │ http://localhost:3001 │
+└──────┴───────┴──────────────┴──────────────────────┴────────────┴───────────────────────┘
+```
 
 ## Install
 
 ```sh
-git clone https://github.com/YOUR_USER/devtools.git ~/Documents/GitHub/devtools
+git clone https://github.com/JaimeOrtegaxyz/devtools.git ~/Documents/GitHub/devtools
 cd ~/Documents/GitHub/devtools
 bash install.sh
 ```
@@ -37,4 +65,4 @@ Or just re-run `bash install.sh`.
 
 ## Customization
 
-Edit `devtools.zsh` directly. Add ports, tools, or new commands as needed.
+Edit `devtools.zsh` directly. Add tools, commands, or detection patterns as needed.

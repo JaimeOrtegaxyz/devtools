@@ -22,7 +22,7 @@ _devtools_scan() {
     n = split($(NF-1), a, ":"); if (a[n]+0 > 0) print a[n], $2
   }')}")
 
-  local line port pid cwd project tool cur ppid cmd
+  local line port pid cwd project tool cur ppid cmd git_root subpath url
 
   for line in "${listeners[@]}"; do
     port="${line%% *}"
@@ -31,10 +31,9 @@ _devtools_scan() {
     seen_pids[$pid]=1
 
     cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2 {print $NF}')
-    local git_root
     git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
     project=$(basename "${git_root:-$cwd}")
-    local subpath="."
+    subpath="."
     if [ -n "$git_root" ] && [ "$cwd" != "$git_root" ]; then
       subpath="${cwd#$git_root/}"
     fi
@@ -57,7 +56,7 @@ _devtools_scan() {
       cur="$ppid"
     done
 
-    local url="http://localhost:$port"
+    url="http://localhost:$port"
 
     _dt_rows+=("$port|$pid|$tool|$project|$subpath|$url")
     _dt_ports+=("$port")
