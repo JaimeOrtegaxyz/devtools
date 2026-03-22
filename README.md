@@ -22,19 +22,6 @@ They're yours to use if you fancy.
 - **`devkill`** — Kill dev servers by port (`devkill 5173`), by project name (`devkill branding-oracle`), or pick from a list (`devkill`).
 - **`devview`** — Raw `lsof` + `ps` dump for when you need the deeper look.
 
-### Example
-
-```
-$ devwho
-┌──────┬───────┬──────────────┬──────────────────────┬────────────┬───────────────────────┐
-│ PORT │ PID   │ TOOL         │ PROJECT              │ PATH       │ URL                   │
-├──────┼───────┼──────────────┼──────────────────────┼────────────┼───────────────────────┤
-│ 8080 │ 25058 │ Collaborator │ surfaceandlogic-demo │ .          │ http://localhost:8080 │
-│ 5173 │ 25425 │ Collaborator │ branding-oracle      │ app/client │ http://localhost:5173 │
-│ 3001 │ 25427 │ Collaborator │ branding-oracle      │ app/server │ http://localhost:3001 │
-└──────┴───────┴──────────────┴──────────────────────┴────────────┴───────────────────────┘
-```
-
 ## Install
 
 ```sh
