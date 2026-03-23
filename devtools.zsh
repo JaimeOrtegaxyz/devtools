@@ -3,7 +3,7 @@
 
 devview() {
   echo "== Local servers =="
-  lsof -nP -iTCP -sTCP:LISTEN | grep -iE 'COMMAND|node|python|ruby|php' || true
+  lsof -nP -iTCP -sTCP:LISTEN | grep -iE 'COMMAND|node|python|ruby|php|deno|bun|java|dotnet|beam.smp' || true
   echo
   echo "== Dev processes =="
   ps aux | grep -E 'vite|npm run dev|next dev|node .*dev|esbuild' | grep -v grep || true
@@ -18,7 +18,7 @@ _devtools_scan() {
 
   local -A seen_pids
   local -a listeners
-  listeners=("${(@f)$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk '{cmd=tolower($1)} cmd~/node|python|ruby|php|deno|bun/ {
+  listeners=("${(@f)$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk '{cmd=tolower($1)} cmd~/node|python|ruby|php|deno|bun|java|dotnet|beam.smp/ {
     n = split($(NF-1), a, ":"); if (a[n]+0 > 0) print a[n], $2
   }')}")
 
