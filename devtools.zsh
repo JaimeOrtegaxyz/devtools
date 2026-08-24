@@ -33,12 +33,40 @@ _devtools_tool_self() {
   print -r -- ""
 }
 
+# --- name an app-owned listener (Raycast, Docker, Figma, …) ---
+_devtools_app_label() {
+  local pid="$1" exe="$2" cur ppid cmd n vendor
+
+  # any ancestor running out of an .app bundle names the app
+  cur="$pid"
+  for n in {1..12}; do
+    cmd=$(ps -o command= -p "$cur" 2>/dev/null)
+    if [[ "$cmd" =~ '/([^/]+)\.app/Contents/MacOS/' ]]; then
+      print -r -- "${match[1]}"; return
+    fi
+    ppid=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' ')
+    [ -z "$ppid" ] || [ "$ppid" = "0" ] || [ "$ppid" = "1" ] && break
+    cur="$ppid"
+  done
+
+  # else the executable's own path: /Applications/Foo.app/… or …/com.vendor.product/…
+  [[ "$exe" =~ '/([^/]+)\.app/' ]] && { print -r -- "${match[1]}"; return }
+  if [[ "$exe" =~ 'Application Support/[a-z]+\.([A-Za-z0-9_-]+)\.' ]]; then
+    vendor="${match[1]}"
+    print -r -- "${(C)vendor}"; return
+  fi
+
+  # last resort: the process's own short name
+  print -r -- "$(ps -o comm= -p "$pid" 2>/dev/null | awk '{n=split($0,a,"/"); print a[n]}')"
+}
+
 # --- shared helper: collect info about listening dev servers ---
 _devtools_scan() {
   _dt_rows=()
   _dt_ports=()
   _dt_pids=()
   _dt_projects=()
+  _dt_other=()
 
   local -A seen_pids
   local -a listeners
@@ -46,7 +74,7 @@ _devtools_scan() {
     n = split($(NF-1), a, ":"); if (a[n]+0 > 0) print a[n], $2
   }')}")
 
-  local line port pid cwd project tool cur ppid cmd git_root subpath url self_tool
+  local line port pid cwd project tool cur ppid cmd git_root subpath url exe self_tool
 
   for line in "${listeners[@]}"; do
     port="${line%% *}"
@@ -55,10 +83,27 @@ _devtools_scan() {
     seen_pids[$pid]=1
 
     cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2 {print $NF}')
+    exe=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | grep -m1 '^n/' | cut -c2-)
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
 
     git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
     self_tool=$(_devtools_tool_self "$cmd")
+
+    # Classify: is this one of MY projects, or something an app happens to run?
+    local is_dev=0
+    if [ -n "$git_root" ]; then
+      is_dev=1
+    elif [[ "$exe" == /Applications/* || "$exe" == */Library/Application\ Support/* || "$exe" == /System/* ]]; then
+      is_dev=0
+    elif [ -n "$self_tool" ] && [[ "$cwd" == "$HOME"/* ]]; then
+      is_dev=1
+    fi
+
+    if [ "$is_dev" -eq 0 ]; then
+      _dt_other+=("$port|$pid|$(_devtools_app_label "$pid" "$exe")")
+      continue
+    fi
+
     project=$(basename "${git_root:-$cwd}")
     subpath="."
     if [ -n "$git_root" ] && [ "$cwd" != "$git_root" ]; then
@@ -95,11 +140,33 @@ _devtools_scan() {
   done
 }
 
+_devtools_print_other() {
+  [ ${#_dt_other[@]} -eq 0 ] && return
+
+  local dim=$'\033[2m'
+  local reset=$'\033[0m'
+  local entry pw=0 idx
+  local -a cols
+
+  for entry in "${_dt_other[@]}"; do
+    cols=("${(@s/|/)entry}")
+    [ ${#cols[1]} -gt $pw ] && pw=${#cols[1]}
+  done
+
+  echo
+  echo "${dim}== Other listeners ==${reset}"
+  for entry in "${_dt_other[@]}"; do
+    cols=("${(@s/|/)entry}")
+    printf "%s  :%-${pw}s  %s (pid %s)%s\n" "$dim" "${cols[1]}" "${cols[3]}" "${cols[2]}" "$reset"
+  done
+}
+
 devwho() {
   _devtools_scan
 
   if [ ${#_dt_rows[@]} -eq 0 ]; then
     echo "No local dev servers found."
+    _devtools_print_other
     return
   fi
 
@@ -159,6 +226,8 @@ devwho() {
   done
 
   print_border "└" "┴" "┘"
+
+  _devtools_print_other
 }
 
 devkill() {
@@ -172,7 +241,8 @@ devkill() {
   fi
 
   local -a kill_pids kill_labels
-  local idx
+  local idx entry
+  local -a ocols
 
   if [ -z "$target" ]; then
     # no args: show numbered list, let user pick
@@ -210,6 +280,15 @@ devkill() {
     done
 
     if [ ${#kill_pids[@]} -eq 0 ]; then
+      # don't just say "not found" if it's a listener we deliberately excluded
+      for entry in "${_dt_other[@]}"; do
+        ocols=("${(@s/|/)entry}")
+        if [ "${ocols[1]}" = "$target" ]; then
+          echo ":$target is ${ocols[3]} (pid ${ocols[2]}), not a project dev server."
+          echo "Kill it yourself if you mean to: kill ${ocols[2]}"
+          return 1
+        fi
+      done
       echo "No server matching '$target'."
       return 1
     fi
@@ -221,3 +300,4 @@ devkill() {
       echo "Failed to kill pid ${kill_pids[$idx]}"
   done
 }
+
