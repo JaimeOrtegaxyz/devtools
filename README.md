@@ -19,7 +19,7 @@ They're yours to use if you fancy.
 ## Commands
 
 - **`devwho`** — One table of your project dev servers: port, process, tool (vite, astro, next, uvicorn…), project name, subfolder path, and a clickable localhost URL. Anything else listening — Raycast, Docker, an Electron app — is named in a dimmed **Other listeners** line below the table, so you can still answer "what's on :7265?" without mistaking it for yours.
-- **`devkill`** — Kill dev servers by port (`devkill 5173`), by project name (`devkill branding-oracle`), or pick from a list (`devkill`).
+- **`devkill`** — Kill dev servers by port (`devkill 5173`), by project name (`devkill branding-oracle`), or pick from a list (`devkill`). `all` kills your servers; `all!` also kills the other listeners, after showing you exactly which apps that means and asking for a typed `yes`. Aiming at an app's port directly tells you what it is instead of killing it.
 - **`devview`** — Raw `lsof` + `ps` dump for when you need the deeper look.
 
 ## Install

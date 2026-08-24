@@ -230,12 +230,30 @@ devwho() {
   _devtools_print_other
 }
 
+# collect the "other listeners" into the kill set, after an explicit confirmation
+_devtools_confirm_others() {
+  [ ${#_dt_other[@]} -eq 0 ] && { echo "No other listeners to kill."; return 1; }
+
+  local entry
+  local -a ocols
+  echo
+  echo "This also kills apps that are not your projects:"
+  for entry in "${_dt_other[@]}"; do
+    ocols=("${(@s/|/)entry}")
+    echo "  :${ocols[1]}  ${ocols[3]} (pid ${ocols[2]})"
+  done
+  printf "Type 'yes' to include them: "
+  local confirm
+  read -r confirm
+  [ "$confirm" = "yes" ]
+}
+
 devkill() {
   local target="$1"
 
   _devtools_scan
 
-  if [ ${#_dt_rows[@]} -eq 0 ]; then
+  if [ ${#_dt_rows[@]} -eq 0 ] && [ ${#_dt_other[@]} -eq 0 ]; then
     echo "No local dev servers found."
     return
   fi
@@ -243,6 +261,15 @@ devkill() {
   local -a kill_pids kill_labels
   local idx entry
   local -a ocols
+
+  # 'all' / 'all!' work as arguments too
+  if [ "$target" = "all" ] || [ "$target" = "all!" ]; then
+    local choice="$target"
+    target=""
+    _devtools_kill_all "$choice" || return 1
+    _devtools_do_kill
+    return
+  fi
 
   if [ -z "$target" ]; then
     # no args: show numbered list, let user pick
@@ -253,16 +280,17 @@ devkill() {
       echo "  $idx) :${cols[1]}  ${cols[4]}  (${cols[3]}, pid ${cols[2]})"
     done
     echo
-    printf "Kill which? (number, 'all', or Enter to cancel): "
+    if [ ${#_dt_other[@]} -gt 0 ]; then
+      printf "Kill which? (number, 'all' = my servers, 'all!' = + other listeners, Enter to cancel): "
+    else
+      printf "Kill which? (number, 'all', or Enter to cancel): "
+    fi
     local choice
     read -r choice
     [ -z "$choice" ] && return
 
-    if [ "$choice" = "all" ]; then
-      for idx in {1..${#_dt_pids[@]}}; do
-        kill_pids+=("${_dt_pids[$idx]}")
-        kill_labels+=(":${_dt_ports[$idx]} ${_dt_projects[$idx]}")
-      done
+    if [ "$choice" = "all" ] || [ "$choice" = "all!" ]; then
+      _devtools_kill_all "$choice" || return 1
     elif [[ "$choice" =~ '^[0-9]+$' ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#_dt_rows[@]} ]; then
       kill_pids+=("${_dt_pids[$choice]}")
       kill_labels+=(":${_dt_ports[$choice]} ${_dt_projects[$choice]}")
@@ -294,10 +322,34 @@ devkill() {
     fi
   fi
 
+  _devtools_do_kill
+}
+
+# fill kill_pids/kill_labels for 'all' (my servers) or 'all!' (everything listening)
+_devtools_kill_all() {
+  local mode="$1" idx entry
+
+  for idx in {1..${#_dt_pids[@]}}; do
+    kill_pids+=("${_dt_pids[$idx]}")
+    kill_labels+=(":${_dt_ports[$idx]} ${_dt_projects[$idx]}")
+  done
+
+  if [ "$mode" = "all!" ]; then
+    _devtools_confirm_others || { echo "Cancelled."; return 1; }
+    for entry in "${_dt_other[@]}"; do
+      ocols=("${(@s/|/)entry}")
+      kill_pids+=("${ocols[2]}")
+      kill_labels+=(":${ocols[1]} ${ocols[3]}")
+    done
+  fi
+  return 0
+}
+
+_devtools_do_kill() {
+  local idx
   for idx in {1..${#kill_pids[@]}}; do
     kill "${kill_pids[$idx]}" 2>/dev/null && \
       echo "Killed ${kill_labels[$idx]} (pid ${kill_pids[$idx]})" || \
       echo "Failed to kill pid ${kill_pids[$idx]}"
   done
 }
-
