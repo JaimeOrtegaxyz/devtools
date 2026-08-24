@@ -9,6 +9,30 @@ devview() {
   ps aux | grep -E 'vite|npm run dev|next dev|node .*dev|esbuild' | grep -v grep || true
 }
 
+# --- name the tool from the process's OWN command line ---
+# Lineage is unreliable: servers launched detached reparent to launchd (ppid 1),
+# so the ancestor chain is gone. The argv is always there.
+_devtools_tool_self() {
+  local cmd="$1" name
+
+  # .../node_modules/.bin/vite --port 5173  → vite
+  name=$(print -r -- "$cmd" | sed -nE 's|.*/node_modules/\.bin/([A-Za-z0-9_.-]+).*|\1|p' | head -1)
+  [ -n "$name" ] && { print -r -- "$name"; return }
+
+  # python -m uvicorn / python -m flask  → uvicorn / flask
+  name=$(print -r -- "$cmd" | sed -nE 's|.*python[0-9.]* +-m +([A-Za-z0-9_.]+).*|\1|p' | head -1)
+  [ -n "$name" ] && { print -r -- "$name"; return }
+
+  # npm/pnpm/yarn/bun run dev  → npm
+  [[ "$cmd" =~ '(npm|pnpm|yarn|bun)( run)? (dev|start|serve)' ]] && { print -r -- "${match[1]}"; return }
+
+  # node path/to/server.js → server.js ; ruby bin/rails → rails
+  name=$(print -r -- "$cmd" | awk '{for(i=2;i<=NF;i++){if($i !~ /^-/){n=split($i,a,"/"); print a[n]; exit}}}')
+  [ -n "$name" ] && { print -r -- "$name"; return }
+
+  print -r -- ""
+}
+
 # --- shared helper: collect info about listening dev servers ---
 _devtools_scan() {
   _dt_rows=()
@@ -22,7 +46,7 @@ _devtools_scan() {
     n = split($(NF-1), a, ":"); if (a[n]+0 > 0) print a[n], $2
   }')}")
 
-  local line port pid cwd project tool cur ppid cmd git_root subpath url
+  local line port pid cwd project tool cur ppid cmd git_root subpath url self_tool
 
   for line in "${listeners[@]}"; do
     port="${line%% *}"
@@ -31,30 +55,36 @@ _devtools_scan() {
     seen_pids[$pid]=1
 
     cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2 {print $NF}')
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+
     git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+    self_tool=$(_devtools_tool_self "$cmd")
     project=$(basename "${git_root:-$cwd}")
     subpath="."
     if [ -n "$git_root" ] && [ "$cwd" != "$git_root" ]; then
       subpath="${cwd#$git_root/}"
     fi
 
-    tool="unknown"
-    cur="$pid"
+    tool="${self_tool:-unknown}"
 
-    for _ in {1..12}; do
-      ppid=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' ')
-      [ -z "$ppid" ] || [ "$ppid" = "0" ] || [ "$ppid" = "1" ] && break
-      cmd=$(ps -o command= -p "$ppid" 2>/dev/null)
-      [ -z "$cmd" ] && break
+    # lineage is now only a fallback, for when argv says nothing useful
+    if [ "$tool" = "unknown" ]; then
+      cur="$pid"
+      for _ in {1..12}; do
+        ppid=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' ')
+        [ -z "$ppid" ] || [ "$ppid" = "0" ] || [ "$ppid" = "1" ] && break
+        cmd=$(ps -o command= -p "$ppid" 2>/dev/null)
+        [ -z "$cmd" ] && break
 
-      [[ "$cmd" =~ '/Applications/Claude.app|/\.claude/|^claude ' ]] && tool="Claude"
-      [[ "$cmd" =~ '/Applications/Collaborator.app|tmux -L collab' ]] && tool="Collaborator"
-      [[ "$cmd" =~ 'tmux' ]] && [ "$tool" = "unknown" ] && tool="tmux"
-      [[ "$cmd" =~ 'ghostty' ]] && [ "$tool" = "unknown" ] && tool="Ghostty"
-      [[ "$cmd" =~ 'cursor' ]] && [ "$tool" = "unknown" ] && tool="Cursor"
+        [[ "$cmd" =~ '/Applications/Claude.app|/\.claude/|^claude ' ]] && tool="Claude"
+        [[ "$cmd" =~ '/Applications/Collaborator.app|tmux -L collab' ]] && tool="Collaborator"
+        [[ "$cmd" =~ 'tmux' ]] && [ "$tool" = "unknown" ] && tool="tmux"
+        [[ "$cmd" =~ 'ghostty' ]] && [ "$tool" = "unknown" ] && tool="Ghostty"
+        [[ "$cmd" =~ 'cursor' ]] && [ "$tool" = "unknown" ] && tool="Cursor"
 
-      cur="$ppid"
-    done
+        cur="$ppid"
+      done
+    fi
 
     url="http://localhost:$port"
 
