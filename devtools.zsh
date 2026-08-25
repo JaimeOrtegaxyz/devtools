@@ -27,7 +27,8 @@ _devtools_tool_self() {
   [[ "$cmd" =~ '(npm|pnpm|yarn|bun)( run)? (dev|start|serve)' ]] && { print -r -- "${match[1]}"; return }
 
   # node path/to/server.js → server.js ; ruby bin/rails → rails
-  name=$(print -r -- "$cmd" | awk '{for(i=2;i<=NF;i++){if($i !~ /^-/){n=split($i,a,"/"); print a[n]; exit}}}')
+  # node (npx remotion studio) → npx  — npm rewrites its title, ps wraps it in parens
+  name=$(print -r -- "$cmd" | awk '{for(i=2;i<=NF;i++){if($i !~ /^-/){gsub(/^\(|\)$/,"",$i); if($i=="")continue; n=split($i,a,"/"); print a[n]; exit}}}')
   [ -n "$name" ] && { print -r -- "$name"; return }
 
   print -r -- ""
