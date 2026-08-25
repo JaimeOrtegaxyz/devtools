@@ -13,7 +13,7 @@ devview() {
 # Lineage is unreliable: servers launched detached reparent to launchd (ppid 1),
 # so the ancestor chain is gone. The argv is always there.
 _devtools_tool_self() {
-  local cmd="$1" name
+  local cmd="$1" name runner sub targ
 
   # .../node_modules/.bin/vite --port 5173  → vite
   name=$(print -r -- "$cmd" | sed -nE 's|.*/node_modules/\.bin/([A-Za-z0-9_.-]+).*|\1|p' | head -1)
@@ -23,8 +23,14 @@ _devtools_tool_self() {
   name=$(print -r -- "$cmd" | sed -nE 's|.*python[0-9.]* +-m +([A-Za-z0-9_.]+).*|\1|p' | head -1)
   [ -n "$name" ] && { print -r -- "$name"; return }
 
-  # npm/pnpm/yarn/bun run dev  → npm
-  [[ "$cmd" =~ '(npm|pnpm|yarn|bun)( run)? (dev|start|serve)' ]] && { print -r -- "${match[1]}"; return }
+  # npm/pnpm/yarn/bun run <script> → the runner ; run <file> or exec/dlx <tool> → the target
+  if [[ "$cmd" =~ '(^|/)(npm|pnpm|yarn|bun) ((run|exec|dlx|x) )?(-[^ ]+ )*([A-Za-z0-9@_.:][A-Za-z0-9@_./:-]*)' ]]; then
+    runner="${match[2]}" sub="${match[4]}" targ="${match[6]}"
+    if [[ "$sub" == (exec|dlx|x) || "$targ" == *[./]* ]]; then
+      print -r -- "${targ:t}"; return
+    fi
+    print -r -- "$runner"; return
+  fi
 
   # node path/to/server.js → server.js ; ruby bin/rails → rails
   # node (npx remotion studio) → npx  — npm rewrites its title, ps wraps it in parens
