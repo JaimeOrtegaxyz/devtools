@@ -78,6 +78,40 @@ _devtools_render_table() {
   _dtt_border "└" "┴" "┘"
 }
 
+# 4.2K / 356K / 1.2M, ls -h style. Returns via REPLY: a $(…) call would
+# fork a subshell per file, which is exactly what makes shell loops slow.
+_devtools_human_size() {
+  local b=$1
+  local -a units=(B K M G T)
+  local i=1
+  local -F v=$b
+  while (( v >= 1024 && i < 5 )); do
+    v=$(( v / 1024.0 ))
+    (( i++ ))
+  done
+  if (( i == 1 )); then
+    REPLY="${b}${units[$i]}"
+  elif (( v >= 10 )); then
+    printf -v REPLY "%.0f%s" "$v" "${units[$i]}"
+  else
+    printf -v REPLY "%.1f%s" "$v" "${units[$i]}"
+  fi
+}
+
+# 45s / 12m / 3h / 5d / 2w / 4mo / 1y from an age in seconds. Returns via REPLY.
+_devtools_rel_time() {
+  local s=$1
+  [ "$s" -lt 0 ] && s=0
+  if   [ "$s" -lt 60 ];       then REPLY="${s}s"
+  elif [ "$s" -lt 3600 ];     then REPLY="$(( s / 60 ))m"
+  elif [ "$s" -lt 86400 ];    then REPLY="$(( s / 3600 ))h"
+  elif [ "$s" -lt 604800 ];   then REPLY="$(( s / 86400 ))d"
+  elif [ "$s" -lt 2592000 ];  then REPLY="$(( s / 604800 ))w"
+  elif [ "$s" -lt 31536000 ]; then REPLY="$(( s / 2592000 ))mo"
+  else                             REPLY="$(( s / 31536000 ))y"
+  fi
+}
+
 # --- name the tool from the process's OWN command line ---
 # Lineage is unreliable: servers launched detached reparent to launchd (ppid 1),
 # so the ancestor chain is gone. The argv is always there.
@@ -385,3 +419,154 @@ _devtools_do_kill() {
   done
 }
 
+# --- devls: ls as a table, newest first ---
+# NAME:     blue dir, magenta symlink, red executable (ls -G conventions)
+# MODIFIED: green under an hour, dimmed past a week
+# GIT:      green ✓ clean, yellow ±N dirty, magenta branch when not main/master
+devls() {
+  zmodload -F zsh/stat b:zstat 2>/dev/null
+  zmodload zsh/datetime 2>/dev/null
+  setopt localoptions extendedglob
+
+  local dir="." show_hidden=0 oldest=0 quick=0 arg f
+  for arg in "$@"; do
+    case "$arg" in
+      -*)
+        for f in ${(s::)${arg#-}}; do   # flags bundle: -aq == -a -q
+          case "$f" in
+            a) show_hidden=1 ;;
+            o) oldest=1 ;;
+            q) quick=1 ;;
+            *) echo "devls: unknown flag -$f (have: -a -o -q)"; return 1 ;;
+          esac
+        done ;;
+      *) dir="$arg" ;;
+    esac
+  done
+  [ -d "$dir" ] || { echo "devls: not a directory: $dir"; return 1; }
+
+  local -a entries
+  if [ "$oldest" -eq 1 ]; then
+    [ "$show_hidden" -eq 1 ] && entries=("$dir"/*(NDOm)) || entries=("$dir"/*(NOm))
+  else
+    [ "$show_hidden" -eq 1 ] && entries=("$dir"/*(NDom)) || entries=("$dir"/*(Nom))
+  fi
+  if [ ${#entries[@]} -eq 0 ]; then
+    echo "Empty."
+    return
+  fi
+
+  local e name kind size mod git_cell branch dirty n
+  local now=$EPOCHSECONDS age has_git=0 gitdir=""
+  local -A st
+  local -a sub repos
+
+  # The dirty check forks one `git status` per repo — the dominant cost.
+  # Run them all concurrently up front; wall time becomes the slowest one.
+  for e in "${entries[@]}"; do
+    [ -d "$e" ] && [ ! -h "$e" ] && [ -e "$e/.git" ] && repos+=("$e")
+  done
+  if [ "$quick" -eq 0 ] && [ ${#repos[@]} -gt 0 ]; then
+    gitdir=$(mktemp -d)
+    ( # subshell so an interactive shell doesn't announce the background jobs
+      local r out j=0
+      for r in "${repos[@]}"; do
+        {
+          out=$(git -C "$r" --no-optional-locks status --porcelain 2>/dev/null)
+          if [ -n "$out" ]; then
+            print -r -- "${#${(f)out}}" > "$gitdir/${r:t}"
+          else
+            print -r -- "0" > "$gitdir/${r:t}"
+          fi
+        } &
+        (( ++j % 24 == 0 )) && wait
+      done
+      wait
+    )
+  fi
+
+  _dtt_rows=()
+  for e in "${entries[@]}"; do
+    name="${e:t}"
+    zstat -L -H st "$e" 2>/dev/null || continue
+    age=$(( now - ${st[mtime]} ))
+    git_cell=""
+
+    if [ -h "$e" ]; then
+      kind="link"
+      _devtools_human_size "${st[size]}"; size=$REPLY
+      name="${_dt_mag}${name}${_dt_reset}"
+    elif [ -d "$e" ]; then
+      sub=("$e"/*(ND))
+      size="${#sub} items"
+      [ ${#sub} -eq 1 ] && size="1 item"
+      kind="dir"
+      [ -e "$e/.git" ] && kind="repo"
+      name="${_dt_bold}${_dt_blue}${name}${_dt_reset}"
+    else
+      kind="file"
+      _devtools_human_size "${st[size]}"; size=$REPLY
+      [ -x "$e" ] && name="${_dt_red}${name}${_dt_reset}"
+    fi
+
+    _devtools_rel_time "$age"; mod=$REPLY
+    if [ "$age" -lt 3600 ]; then
+      mod="${_dt_green}${mod}${_dt_reset}"
+    elif [ "$age" -ge 604800 ]; then
+      mod="${_dt_dim}${mod}${_dt_reset}"
+    fi
+
+    if [ "$kind" = "repo" ]; then
+      has_git=1
+      branch=""
+      if [ -f "$e/.git/HEAD" ]; then
+        read -r branch < "$e/.git/HEAD"
+        if [[ "$branch" == ref:* ]]; then
+          branch="${branch#ref: refs/heads/}"
+        else
+          branch="${branch[1,7]}"   # detached HEAD: short hash
+        fi
+      else
+        # .git is a file (worktree/submodule)
+        branch=$(git -C "$e" branch --show-current 2>/dev/null)
+      fi
+      [ -z "$branch" ] && branch="?"
+
+      if [ "$quick" -eq 1 ]; then
+        dirty=""   # -q: no status run, so no clean/dirty claim
+      else
+        n=0
+        [ -n "$gitdir" ] && [ -f "$gitdir/${e:t}" ] && read -r n < "$gitdir/${e:t}"
+        if [ "$n" -gt 0 ]; then
+          dirty="${_dt_yellow}±${n}${_dt_reset}"
+        else
+          dirty="${_dt_green}✓${_dt_reset}"
+        fi
+      fi
+
+      if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+        git_cell="${branch}${dirty:+ $dirty}"
+      else
+        git_cell="${_dt_mag}${branch}${_dt_reset}${dirty:+ $dirty}"
+      fi
+    fi
+
+    _dtt_rows+=("${name}"$'\x1f'"${kind}"$'\x1f'"${size}"$'\x1f'"${mod}"$'\x1f'"${git_cell}")
+  done
+
+  [ -n "$gitdir" ] && rm -rf "$gitdir"
+
+  if [ "$has_git" -eq 1 ]; then
+    _dtt_headers=("NAME" "KIND" "SIZE" "MODIFIED" "GIT")
+    _dtt_align=(l l r r l)
+  else
+    _dtt_headers=("NAME" "KIND" "SIZE" "MODIFIED")
+    _dtt_align=(l l r r)
+    local -a trimmed
+    local r
+    for r in "${_dtt_rows[@]}"; do trimmed+=("${r%$'\x1f'}"); done
+    _dtt_rows=("${trimmed[@]}")
+  fi
+
+  _devtools_render_table
+}
