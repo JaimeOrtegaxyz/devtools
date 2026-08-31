@@ -518,11 +518,14 @@ devls() {
     gitdir=$(mktemp -d)
     ( # subshell so an interactive shell doesn't announce the background jobs
       local r out j=0
+      local -a olines
       for r in "${repos[@]}"; do
         {
           out=$(git -C "$r" status --porcelain 2>/dev/null)
           if [ -n "$out" ]; then
-            print -r -- "${#${(f)out}}" > "$gitdir/${r:t}"
+            # explicit array: inline ${#${(f)out}} gives strlen when out is one line
+            olines=("${(@f)out}")
+            print -r -- "${#olines}" > "$gitdir/${r:t}"
           else
             print -r -- "0" > "$gitdir/${r:t}"
           fi
