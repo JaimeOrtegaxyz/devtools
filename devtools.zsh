@@ -506,6 +506,11 @@ devls() {
 
   # The dirty check forks one `git status` per repo — the dominant cost.
   # Run them all concurrently up front; wall time becomes the slowest one.
+  # No --no-optional-locks: each repo has its own index lock, so parallel
+  # statuses across repos never contend — and the flag blocks the refreshed
+  # stat-cache write-back, leaving a stale-index repo (rsync/iCloud/copied
+  # clone) to re-hash every file on every run. Letting status heal the index
+  # makes the first run pay once and every later run ~10ms.
   for e in "${entries[@]}"; do
     [ -d "$e" ] && [ ! -h "$e" ] && [ -e "$e/.git" ] && repos+=("$e")
   done
@@ -515,14 +520,14 @@ devls() {
       local r out j=0
       for r in "${repos[@]}"; do
         {
-          out=$(git -C "$r" --no-optional-locks status --porcelain 2>/dev/null)
+          out=$(git -C "$r" status --porcelain 2>/dev/null)
           if [ -n "$out" ]; then
             print -r -- "${#${(f)out}}" > "$gitdir/${r:t}"
           else
             print -r -- "0" > "$gitdir/${r:t}"
           fi
         } &
-        (( ++j % 24 == 0 )) && wait
+        (( ++j % 64 == 0 )) && wait
       done
       wait
     )
