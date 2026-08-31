@@ -78,6 +78,49 @@ _devtools_render_table() {
   _dtt_border "└" "┴" "┘"
 }
 
+# Render _dtt_* as one table — or, when the table would scroll off the screen
+# and the terminal is wide enough, as two side-by-side halves (read down the
+# left table first, like ls columns).
+_devtools_render_table_fit() {
+  setopt localoptions extendedglob
+  local rows=${#_dtt_rows[@]}
+  local lines=${LINES:-24} cols=${COLUMNS:-80}
+
+  # 4 = top border + header + rule + bottom border
+  if (( rows < 4 || rows + 4 <= lines )); then
+    _devtools_render_table
+    return
+  fi
+
+  local -a all lt rt
+  all=("${_dtt_rows[@]}")
+  local half=$(( (rows + 1) / 2 ))
+
+  _dtt_rows=("${(@)all[1,$half]}")
+  lt=("${(@f)$(_devtools_render_table)}")
+  _dtt_rows=("${(@)all[$half+1,-1]}")
+  rt=("${(@f)$(_devtools_render_table)}")
+  _dtt_rows=("${all[@]}")
+
+  # each table's visible width = its top border (no ANSI codes there)
+  local lw=${#lt[1]} gap=2
+  if (( lw + gap + ${#rt[1]} > cols )); then
+    _devtools_render_table
+    return
+  fi
+
+  local i l plain
+  for i in {1..${#lt[@]}}; do
+    l="${lt[$i]}"
+    if (( i <= ${#rt[@]} )); then
+      plain=${l//$'\e'\[[0-9;]#m/}
+      printf "%s%*s%*s%s\n" "$l" $(( lw - ${#plain} )) "" "$gap" "" "${rt[$i]}"
+    else
+      print -r -- "$l"
+    fi
+  done
+}
+
 # 4.2K / 356K / 1.2M, ls -h style. Returns via REPLY: a $(…) call would
 # fork a subshell per file, which is exactly what makes shell loops slow.
 _devtools_human_size() {
@@ -291,7 +334,7 @@ devwho() {
     _dtt_rows+=("${(pj/\x1f/)cols}")
   done
 
-  _devtools_render_table
+  _devtools_render_table_fit
   _devtools_print_other
 }
 
@@ -568,5 +611,5 @@ devls() {
     _dtt_rows=("${trimmed[@]}")
   fi
 
-  _devtools_render_table
+  _devtools_render_table_fit
 }
