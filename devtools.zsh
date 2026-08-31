@@ -1,12 +1,81 @@
 # devtools.zsh — lightweight dev-server helpers for interactive zsh
 # Source this from ~/.zshrc (or install via install.sh)
 
+# semantic colors — color means something here, it doesn't decorate
+typeset -g _dt_reset=$'\033[0m' _dt_bold=$'\033[1m' _dt_dim=$'\033[2m'
+typeset -g _dt_red=$'\033[31m' _dt_green=$'\033[32m' _dt_yellow=$'\033[33m'
+typeset -g _dt_blue=$'\033[34m' _dt_mag=$'\033[35m'
+
 devview() {
   echo "== Local servers =="
   lsof -nP -iTCP -sTCP:LISTEN | grep -iE 'COMMAND|node|python|ruby|php|deno|bun|java|dotnet|beam.smp' || true
   echo
   echo "== Dev processes =="
   ps aux | grep -E 'vite|npm run dev|next dev|node .*dev|esbuild' | grep -v grep || true
+}
+
+# --- generic table renderer ---
+# reads: _dtt_headers, _dtt_align (l/r per column), _dtt_rows (cells joined
+# with $'\x1f'). Cells may carry ANSI colors; widths are measured without them.
+_devtools_render_table() {
+  setopt localoptions extendedglob
+  local ncols=${#_dtt_headers[@]}
+  local -a widths
+  local i row plain cell pad
+  local -a cols
+
+  for i in {1..$ncols}; do
+    widths[$i]=${#_dtt_headers[$i]}
+  done
+  for row in "${_dtt_rows[@]}"; do
+    cols=("${(@ps/\x1f/)row}")
+    for i in {1..$ncols}; do
+      plain=${cols[$i]//$'\e'\[[0-9;]#m/}
+      [ ${#plain} -gt ${widths[$i]} ] && widths[$i]=${#plain}
+    done
+  done
+
+  _dtt_border() {
+    # pure-zsh fill: the printf|tr version forked two processes per segment
+    local out="$1" w
+    for i in {1..$ncols}; do
+      w=$(( ${widths[$i]} + 2 ))
+      out+="${(l:$w::─:):-}"
+      [ "$i" -lt "$ncols" ] && out+="$2" || out+="$3"
+    done
+    print -r -- "$out"
+  }
+
+  _dtt_print_row() {
+    local -a vals
+    vals=("$@")
+    printf "│"
+    for i in {1..$ncols}; do
+      cell="${vals[$i]}"
+      plain=${cell//$'\e'\[[0-9;]#m/}
+      pad=$(( ${widths[$i]} - ${#plain} ))
+      if [ "${_dtt_align[$i]}" = "r" ]; then
+        printf " %*s%s │" "$pad" "" "$cell"
+      else
+        printf " %s%*s │" "$cell" "$pad" ""
+      fi
+    done
+    printf "\n"
+  }
+
+  local -a hdr
+  for i in {1..$ncols}; do
+    hdr+=("${_dt_bold}${_dtt_headers[$i]}${_dt_reset}")
+  done
+
+  _dtt_border "┌" "┬" "┐"
+  _dtt_print_row "${hdr[@]}"
+  _dtt_border "├" "┼" "┤"
+  for row in "${_dtt_rows[@]}"; do
+    cols=("${(@ps/\x1f/)row}")
+    _dtt_print_row "${cols[@]}"
+  done
+  _dtt_border "└" "┴" "┘"
 }
 
 # --- name the tool from the process's OWN command line ---
@@ -177,63 +246,18 @@ devwho() {
     return
   fi
 
-  local headers=("PORT" "PID" "TOOL" "PROJECT" "PATH" "URL")
-  local widths=()
-  local ncols=6
-  local i row
+  _dtt_headers=("PORT" "PID" "TOOL" "PROJECT" "PATH" "URL")
+  _dtt_align=(r r l l l l)
+  _dtt_rows=()
 
-  for i in {1..$ncols}; do
-    widths[$i]=${#headers[$i]}
-  done
-
+  local row
+  local -a cols
   for row in "${_dt_rows[@]}"; do
-    local -a cols
     cols=("${(@s/|/)row}")
-    for i in {1..$ncols}; do
-      [ ${#cols[$i]} -gt ${widths[$i]} ] && widths[$i]=${#cols[$i]}
-    done
+    _dtt_rows+=("${(pj/\x1f/)cols}")
   done
 
-  local bold=$'\033[1m'
-  local reset=$'\033[0m'
-
-  print_border() {
-    local left="$1" mid="$2" right="$3"
-    printf "%s" "$left"
-    for i in {1..$ncols}; do
-      printf " %-${widths[$i]}s " "" | tr ' ' '─'
-      [ "$i" -lt "$ncols" ] && printf "%s" "$mid" || printf "%s\n" "$right"
-    done
-  }
-
-  print_row() {
-    local -a vals
-    vals=("$@")
-    printf "│"
-    for i in {1..$ncols}; do
-      printf " %-${widths[$i]}s " "${vals[$i]}"
-      [ "$i" -lt "$ncols" ] && printf "│" || printf "│\n"
-    done
-  }
-
-  print_border "┌" "┬" "┐"
-
-  printf "│"
-  for i in {1..$ncols}; do
-    printf " %s%-${widths[$i]}s%s " "$bold" "${headers[$i]}" "$reset"
-    [ "$i" -lt "$ncols" ] && printf "│" || printf "│\n"
-  done
-
-  print_border "├" "┼" "┤"
-
-  for row in "${_dt_rows[@]}"; do
-    local -a cols
-    cols=("${(@s/|/)row}")
-    print_row "${cols[@]}"
-  done
-
-  print_border "└" "┴" "┘"
-
+  _devtools_render_table
   _devtools_print_other
 }
 
@@ -360,3 +384,4 @@ _devtools_do_kill() {
       echo "Failed to kill pid ${kill_pids[$idx]}"
   done
 }
+
