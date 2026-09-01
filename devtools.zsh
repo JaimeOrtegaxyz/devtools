@@ -466,27 +466,32 @@ _devtools_do_kill() {
 # NAME:     blue dir, magenta symlink, red executable (ls -G conventions)
 # MODIFIED: green under an hour, dimmed past a week
 # GIT:      green ✓ clean, yellow ±N dirty, magenta branch when not main/master
+# -g:       sort by git standing — dirtiest first, then clean repos, then the rest
 devls() {
   zmodload -F zsh/stat b:zstat 2>/dev/null
   zmodload zsh/datetime 2>/dev/null
   setopt localoptions extendedglob
 
-  local dir="." show_hidden=0 oldest=0 quick=0 arg f
+  local dir="." show_hidden=0 oldest=0 quick=0 bygit=0 arg f
   for arg in "$@"; do
     case "$arg" in
       -*)
         for f in ${(s::)${arg#-}}; do   # flags bundle: -aq == -a -q
           case "$f" in
             a) show_hidden=1 ;;
+            g) bygit=1 ;;
             o) oldest=1 ;;
             q) quick=1 ;;
-            *) echo "devls: unknown flag -$f (have: -a -o -q)"; return 1 ;;
+            *) echo "devls: unknown flag -$f (have: -a -g -o -q)"; return 1 ;;
           esac
         done ;;
       *) dir="$arg" ;;
     esac
   done
   [ -d "$dir" ] || { echo "devls: not a directory: $dir"; return 1; }
+  if [ "$bygit" -eq 1 ] && [ "$quick" -eq 1 ]; then
+    echo "devls: -g sorts by the clean/dirty check that -q skips"; return 1
+  fi
 
   local -a entries
   if [ "$oldest" -eq 1 ]; then
@@ -499,7 +504,7 @@ devls() {
     return
   fi
 
-  local e name kind size mod git_cell branch dirty n
+  local e name kind size mod git_cell branch dirty n row w k i
   local now=$EPOCHSECONDS age has_git=0 gitdir=""
   local -A st
   local -a sub repos
@@ -542,6 +547,7 @@ devls() {
     zstat -L -H st "$e" 2>/dev/null || continue
     age=$(( now - ${st[mtime]} ))
     git_cell=""
+    w=0
 
     if [ -h "$e" ]; then
       kind="link"
@@ -588,6 +594,7 @@ devls() {
       else
         n=0
         [ -n "$gitdir" ] && [ -f "$gitdir/${e:t}" ] && read -r n < "$gitdir/${e:t}"
+        w=$(( n + 1 ))   # -g weight: dirty repos beat clean (1), all repos beat non-repos (0)
         if [ "$n" -gt 0 ]; then
           dirty="${_dt_yellow}±${n}${_dt_reset}"
         else
@@ -602,10 +609,24 @@ devls() {
       fi
     fi
 
-    _dtt_rows+=("${name}"$'\x1f'"${kind}"$'\x1f'"${size}"$'\x1f'"${mod}"$'\x1f'"${git_cell}")
+    row="${name}"$'\x1f'"${kind}"$'\x1f'"${size}"$'\x1f'"${mod}"$'\x1f'"${git_cell}"
+    if [ "$bygit" -eq 1 ]; then
+      # fixed-width key so a plain string sort orders numerically: inverted
+      # weight (dirtiest first), then row index (keeps the mtime tie-break)
+      k=$(( 999999 - w )); i=${#_dtt_rows}
+      row="${(l:6::0:)k}${(l:6::0:)i}"$'\x1f'"$row"
+    fi
+    _dtt_rows+=("$row")
   done
 
   [ -n "$gitdir" ] && rm -rf "$gitdir"
+
+  if [ "$bygit" -eq 1 ]; then
+    _dtt_rows=("${(o)_dtt_rows[@]}")
+    local -a resorted
+    for row in "${_dtt_rows[@]}"; do resorted+=("${row#*$'\x1f'}"); done
+    _dtt_rows=("${resorted[@]}")
+  fi
 
   if [ "$has_git" -eq 1 ]; then
     _dtt_headers=("NAME" "KIND" "SIZE" "MODIFIED" "GIT")
