@@ -467,12 +467,13 @@ _devtools_do_kill() {
 # MODIFIED: green under an hour, dimmed past a week
 # GIT:      green ✓ clean, yellow ±N dirty, magenta branch when not main/master
 # -g:       sort by git standing — dirtiest first, then clean repos, then the rest
+# -n:       sort by name instead of mtime (-o reverses either)
 devls() {
   zmodload -F zsh/stat b:zstat 2>/dev/null
   zmodload zsh/datetime 2>/dev/null
   setopt localoptions extendedglob
 
-  local dir="." show_hidden=0 oldest=0 quick=0 bygit=0 arg f
+  local dir="." show_hidden=0 oldest=0 quick=0 bygit=0 byname=0 arg f
   for arg in "$@"; do
     case "$arg" in
       -*)
@@ -480,9 +481,10 @@ devls() {
           case "$f" in
             a) show_hidden=1 ;;
             g) bygit=1 ;;
+            n) byname=1 ;;
             o) oldest=1 ;;
             q) quick=1 ;;
-            *) echo "devls: unknown flag -$f (have: -a -g -o -q)"; return 1 ;;
+            *) echo "devls: unknown flag -$f (have: -a -g -n -o -q)"; return 1 ;;
           esac
         done ;;
       *) dir="$arg" ;;
@@ -494,11 +496,10 @@ devls() {
   fi
 
   local -a entries
-  if [ "$oldest" -eq 1 ]; then
-    [ "$show_hidden" -eq 1 ] && entries=("$dir"/*(NDOm)) || entries=("$dir"/*(NOm))
-  else
-    [ "$show_hidden" -eq 1 ] && entries=("$dir"/*(NDom)) || entries=("$dir"/*(Nom))
-  fi
+  local ord=om                          # mtime, newest first
+  [ "$byname" -eq 1 ] && ord=on         # -n: name, A→Z
+  [ "$oldest" -eq 1 ] && ord=O${ord#o}  # -o: reverse either order
+  [ "$show_hidden" -eq 1 ] && entries=("$dir"/*(ND${ord})) || entries=("$dir"/*(N${ord}))
   if [ ${#entries[@]} -eq 0 ]; then
     echo "Empty."
     return
@@ -612,7 +613,7 @@ devls() {
     row="${name}"$'\x1f'"${kind}"$'\x1f'"${size}"$'\x1f'"${mod}"$'\x1f'"${git_cell}"
     if [ "$bygit" -eq 1 ]; then
       # fixed-width key so a plain string sort orders numerically: inverted
-      # weight (dirtiest first), then row index (keeps the mtime tie-break)
+      # weight (dirtiest first), then row index (keeps the base sort as tie-break)
       k=$(( 999999 - w )); i=${#_dtt_rows}
       row="${(l:6::0:)k}${(l:6::0:)i}"$'\x1f'"$row"
     fi
