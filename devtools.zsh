@@ -467,7 +467,7 @@ _devtools_do_kill() {
 # MODIFIED: green under an hour, dimmed past a week
 # GIT:      green ✓ clean, yellow ±N dirty, magenta branch when not main/master;
 #           yellow ↓N behind / ↑N ahead of upstream, ↑? branch has no upstream,
-#           $N stashes, red ! when a fetch failed
+#           $N stashes, red ! when a fetch failed, dim … while a fetch is still running
 # -f:       git fetch every repo first, so ↓/↑ reflect the remote right now
 #           (otherwise they reflect the last fetch, whenever that was)
 # -g:       sort by git standing — most out of sync first, then clean, then the rest
@@ -526,10 +526,11 @@ devls() {
   # stat-cache write-back, leaving a stale-index repo (rsync/iCloud/copied
   # clone) to re-hash every file on every run. Letting status heal the index
   # makes the first run pay once and every later run ~10ms.
-  # With -f each job fetches first and the table waits for the slowest fetch —
-  # a big pack takes as long as it takes (Ctrl-C if you can't wait; the fetches
-  # finish on their own). What it never does is hang: no credential prompts,
-  # no auto-gc, and a transfer that stalls is aborted and shown as a red !.
+  # With -f each job measures, fetches, then measures again. The table waits at
+  # most 10s: a repo still fetching after that shows its last-known counts with
+  # a dim …, and its fetch keeps running on its own (closing the window doesn't
+  # kill it) so the next devls reads right. A fetch never hangs: no credential
+  # prompts, no auto-gc, and a stalled transfer is aborted and shown as a red !.
   for e in "${entries[@]}"; do
     [ -d "$e" ] && [ ! -h "$e" ] && [ -e "$e/.git" ] && repos+=("$e")
   done
@@ -537,36 +538,50 @@ devls() {
     gitdir=$(mktemp -d)
     [ "$fetch" -eq 1 ] && [ -t 2 ] && print -nu2 -- "fetching ${#repos} repos…"
     ( # subshell so an interactive shell doesn't announce the background jobs
-      local r out j=0   # n/bh/ah/flags are the function's locals; a re-`local`
-                        # here would make zsh print them
-      local -a olines
+      local r out fp ff j=0   # n/bh/ah/flags/f are the function's locals; a
+                              # re-`local` here would make zsh print them
+      local -a olines fin
+      _devls_measure() {   # sets n bh ah flags for repo $1 — local refs, no network
+        n=0; bh=0; ah=0; flags=""
+        out=$(git -C "$1" status --porcelain 2>/dev/null)
+        if [ -n "$out" ]; then
+          olines=("${(@f)out}")   # explicit array: ${#${(f)out}} is strlen for one line
+          n=${#olines}
+        fi
+        if out=$(git -C "$1" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null); then
+          bh=${out%%[[:space:]]*}; ah=${out##*[[:space:]]}
+        elif [ -n "$(git -C "$1" remote 2>/dev/null)" ]; then
+          flags+="U"   # has a remote, but this branch tracks nothing there
+        fi
+      }
       for r in "${repos[@]}"; do
+        fp="$gitdir/${r:t}"
         {
-          flags=""
+          trap '' HUP
+          _devls_measure "$r"
+          print -r -- "$n $bh $ah $flags" > "$fp"
           if [ "$fetch" -eq 1 ] && [ -n "$(git -C "$r" remote 2>/dev/null)" ]; then
+            ff=""
             GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10' \
               git -C "$r" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
-                fetch --prune --no-auto-maintenance -q >/dev/null 2>&1 || flags+="F"
+                fetch --prune --no-auto-maintenance -q >/dev/null 2>&1 || ff="F"
+            _devls_measure "$r"
+            flags+="$ff"
           fi
-          out=$(git -C "$r" status --porcelain 2>/dev/null)
-          n=0
-          if [ -n "$out" ]; then
-            # explicit array: inline ${#${(f)out}} gives strlen when out is one line
-            olines=("${(@f)out}")
-            n=${#olines}
-          fi
-          # behind/ahead of the tracking branch: local refs only, no network
-          bh=0; ah=0
-          if out=$(git -C "$r" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null); then
-            bh=${out%%[[:space:]]*}; ah=${out##*[[:space:]]}
-          elif [ -n "$(git -C "$r" remote 2>/dev/null)" ]; then
-            flags+="U"   # has a remote, but this branch tracks nothing there
-          fi
-          print -r -- "$n $bh $ah $flags" > "$gitdir/${r:t}"
-        } &
-        (( ++j % 64 == 0 )) && wait
+          print -r -- "$n $bh $ah $flags" > "$fp.done"   # may land after cleanup; that's fine
+        } >/dev/null 2>&1 </dev/null &   # fully detached, or a late job would hold `devls -f | less` open
+        [ "$fetch" -eq 0 ] && (( ++j % 64 == 0 )) && wait
       done
-      wait
+      if [ "$fetch" -eq 1 ]; then
+        local deadline=$(( EPOCHREALTIME + 10 ))
+        while (( EPOCHREALTIME < deadline )); do
+          fin=("$gitdir"/*.done(N))
+          (( ${#fin} >= ${#repos} )) && break
+          sleep 0.2
+        done
+      else
+        wait
+      fi
     )
     [ "$fetch" -eq 1 ] && [ -t 2 ] && print -nu2 -- $'\r\e[K'
   fi
@@ -633,7 +648,12 @@ devls() {
         dirty=""   # -q: no status run, so no clean/dirty or behind/ahead claim
       else
         n=0; bh=0; ah=0; flags=""
-        [ -n "$gitdir" ] && [ -f "$gitdir/${e:t}" ] && read -r n bh ah flags < "$gitdir/${e:t}"
+        if [ -n "$gitdir" ] && [ -f "$gitdir/${e:t}.done" ]; then
+          read -r n bh ah flags < "$gitdir/${e:t}.done"
+        else
+          [ -n "$gitdir" ] && [ -f "$gitdir/${e:t}" ] && read -r n bh ah flags < "$gitdir/${e:t}"
+          [ "$fetch" -eq 1 ] && flags+="P"   # fetch still in progress: counts are pre-fetch
+        fi
         if [ "$n" -gt 0 ]; then
           dirty="${_dt_yellow}±${n}${_dt_reset}"
         else
@@ -643,6 +663,7 @@ devls() {
         [ "$ah" -gt 0 ] && sync+=" ${_dt_yellow}↑${ah}${_dt_reset}"
         [[ "$flags" == *U* ]] && sync+=" ${_dt_yellow}↑?${_dt_reset}"
         [[ "$flags" == *F* ]] && sync+=" ${_dt_red}!${_dt_reset}"
+        [[ "$flags" == *P* ]] && sync+=" ${_dt_dim}…${_dt_reset}"
         # -g weight: anything pending beats clean (1), all repos beat non-repos (0)
         w=$(( n + bh + ah + ns + 1 ))
         [[ "$flags" == *U* ]] && (( w++ ))
