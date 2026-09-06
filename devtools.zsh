@@ -472,6 +472,18 @@ _devtools_do_kill() {
 #           (otherwise they reflect the last fetch, whenever that was)
 # -g:       sort by git standing — most out of sync first, then clean, then the rest
 # -n:       sort by name instead of mtime (-o reverses either)
+_devls_usage() {
+  cat <<'USAGE'
+usage: devls [-afgnoq] [dir]
+  -a  include dotfiles
+  -f  fetch repos first
+  -g  sort by git standing
+  -n  sort by name
+  -o  reverse the sort
+  -q  quick: skip git status
+  -h  this help
+USAGE
+}
 devls() {
   zmodload -F zsh/stat b:zstat 2>/dev/null
   zmodload zsh/datetime 2>/dev/null
@@ -489,7 +501,8 @@ devls() {
             n) byname=1 ;;
             o) oldest=1 ;;
             q) quick=1 ;;
-            *) echo "devls: unknown flag -$f (have: -a -f -g -n -o -q)"; return 1 ;;
+            h) _devls_usage; return 0 ;;
+            *) echo "devls: unknown flag -$f"; _devls_usage; return 1 ;;
           esac
         done ;;
       *) dir="$arg" ;;
