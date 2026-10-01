@@ -474,7 +474,7 @@ _devtools_do_kill() {
 # -n:       sort by name instead of mtime (-o reverses either)
 _devls_usage() {
   cat <<'USAGE'
-usage: devls [-afgnoq] [dir]
+usage: devls (or dls) [-afgnoq] [dir]
   -a  include dotfiles
   -f  fetch repos first
   -g  sort by git standing
@@ -722,3 +722,6 @@ devls() {
 
   _devtools_render_table_fit
 }
+
+# short names: dwho, dkill, dls, dview
+alias dwho=devwho dkill=devkill dls=devls dview=devview
