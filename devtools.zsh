@@ -769,5 +769,31 @@ devls() {
   _devtools_render_table_fit
 }
 
+# Tab after devkill/dkill: the running servers' ports and project names
+# (aliases expand before completion, so dkill gets this too)
+_devkill_complete() {
+  _devtools_scan
+  local -a ports projects
+  local -A seen
+  local idx p
+  local -a typed=("${(@)words[2,CURRENT-1]}")   # skip what's already on the line
+  for (( idx = 1; idx <= ${#_dt_rows}; idx++ )); do
+    (( ${typed[(Ie)${_dt_ports[$idx]}]} )) || ports+=("${_dt_ports[$idx]}:${_dt_projects[$idx]}")
+    p=${_dt_projects[$idx]}
+    (( ${typed[(Ie)$p]} )) && continue
+    if [ -n "${seen[$p]}" ]; then
+      seen[$p]+=", :${_dt_ports[$idx]}"
+    else
+      seen[$p]=":${_dt_ports[$idx]}"
+    fi
+  done
+  for p in "${(@k)seen}"; do projects+=("${p//:/\\:}:${seen[$p]}"); done
+  _describe -t ports 'port' ports
+  _describe -t projects 'project' projects
+  local -a everything=('all:all your dev servers' 'all!:+ other listeners, after a typed yes')
+  (( CURRENT == 2 )) && _describe -t all 'everything' everything
+}
+(( $+functions[compdef] )) && compdef _devkill_complete devkill
+
 # short names: dwho, dkill, dls, dview
 alias dwho=devwho dkill=devkill dls=devls dview=devview
