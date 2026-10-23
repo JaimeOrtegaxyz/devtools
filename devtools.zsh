@@ -402,7 +402,7 @@ devkill() {
   local -a ocols
 
   # 'all' / 'all!' work as arguments too
-  if [ "$target" = "all" ] || [ "$target" = "all!" ]; then
+  if [ $# -eq 1 ] && { [ "$target" = "all" ] || [ "$target" = "all!" ]; }; then
     local choice="$target"
     target=""
     _devtools_kill_all "$choice" || return 1
@@ -438,27 +438,41 @@ devkill() {
       return 1
     fi
   else
-    # match by port number or project name
-    for idx in {1..${#_dt_rows[@]}}; do
-      if [ "${_dt_ports[$idx]}" = "$target" ] || [ "${_dt_projects[$idx]}" = "$target" ]; then
-        kill_pids+=("${_dt_pids[$idx]}")
-        kill_labels+=(":${_dt_ports[$idx]} ${_dt_projects[$idx]}")
-      fi
-    done
+    # one or more targets, each an exact port or project name
+    local -A picked
+    local t hit missed=0 other
 
-    if [ ${#kill_pids[@]} -eq 0 ]; then
-      # don't just say "not found" if it's a listener we deliberately excluded
-      for entry in "${_dt_other[@]}"; do
-        ocols=("${(@s/|/)entry}")
-        if [ "${ocols[1]}" = "$target" ]; then
-          echo ":$target is ${ocols[3]} (pid ${ocols[2]}), not a project dev server."
-          echo "Kill it yourself if you mean to: kill ${ocols[2]}"
-          return 1
+    for t in "$@"; do
+      hit=0
+      for (( idx = 1; idx <= ${#_dt_rows}; idx++ )); do
+        if [ "${_dt_ports[$idx]}" = "$t" ] || [ "${_dt_projects[$idx]}" = "$t" ]; then
+          hit=1
+          [ -n "${picked[$idx]}" ] && continue
+          picked[$idx]=1
+          kill_pids+=("${_dt_pids[$idx]}")
+          kill_labels+=(":${_dt_ports[$idx]} ${_dt_projects[$idx]}")
         fi
       done
-      echo "No server matching '$target'."
-      return 1
+      [ "$hit" -eq 1 ] && continue
+
+      missed=1
+      # don't just say "not found" if it's a listener we deliberately excluded
+      other=0
+      for entry in "${_dt_other[@]}"; do
+        ocols=("${(@s/|/)entry}")
+        if [ "${ocols[1]}" = "$t" ]; then
+          echo ":$t is ${ocols[3]} (pid ${ocols[2]}), not a project dev server."
+          echo "Kill it yourself if you mean to: kill ${ocols[2]}"
+          other=1
+        fi
+      done
+      [ "$other" -eq 0 ] && echo "No server matching '$t'."
+    done
+
+    if [ ${#kill_pids[@]} -gt 0 ]; then
+      _devtools_do_kill
     fi
+    return $missed
   fi
 
   _devtools_do_kill
