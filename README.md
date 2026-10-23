@@ -18,7 +18,7 @@ They're yours to use if you fancy.
 
 ## Commands
 
-Each command also answers to a short name: `dwho`, `dkill`, `dls`, `dview`.
+Each command also answers to a short name: `dwho`, `dkill`, `dls`, `dview`. Every command takes `-h` for its usage; `devhelp` (`dhelp`) prints them all.
 
 - **`devwho`** — One table of your project dev servers: port, process, tool (vite, astro, next, uvicorn…), project name, subfolder path, and a clickable localhost URL. Anything else listening — Raycast, Docker, an Electron app — is named in a dimmed **Other listeners** line below the table, so you can still answer "what's on :7265?" without mistaking it for yours. A table wider than the window shortens the PATH column (keeping its end, `…/runs/round-5`), then PROJECT, instead of wrapping.
 - **`devkill`** — Kill dev servers by port (`devkill 5173`), by project name (`devkill branding-oracle`), or pick from a list (`devkill`). Give it several at once (`devkill 5173 branding-oracle`); names and ports match exactly, so a typo kills nothing. Tab completes the running ports and project names. `all` kills your servers; `all!` also kills the other listeners, after showing you exactly which apps that means and asking for a typed `yes`. Aiming at an app's port directly tells you what it is instead of killing it.

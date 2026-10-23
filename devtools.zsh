@@ -6,7 +6,18 @@ typeset -g _dt_reset=$'\033[0m' _dt_bold=$'\033[1m' _dt_dim=$'\033[2m'
 typeset -g _dt_red=$'\033[31m' _dt_green=$'\033[32m' _dt_yellow=$'\033[33m'
 typeset -g _dt_blue=$'\033[34m' _dt_mag=$'\033[35m'
 
+_devview_usage() {
+  cat <<'USAGE'
+usage: devview (or dview)
+  raw lsof + ps dump of listeners and dev processes
+  -h  this help
+USAGE
+}
 devview() {
+  case "$1" in
+    -h|--help) _devview_usage; return 0 ;;
+    ?*) echo "devview: takes no arguments"; _devview_usage; return 1 ;;
+  esac
   echo "== Local servers =="
   lsof -nP -iTCP -sTCP:LISTEN | grep -iE 'COMMAND|node|python|ruby|php|deno|bun|java|dotnet|beam.smp' || true
   echo
@@ -344,7 +355,19 @@ _devtools_print_other() {
   done
 }
 
+_devwho_usage() {
+  cat <<'USAGE'
+usage: devwho (or dwho)
+  table of your running dev servers, other listeners below it
+  -h  this help
+USAGE
+}
 devwho() {
+  case "$1" in
+    -h|--help) _devwho_usage; return 0 ;;
+    ?*) echo "devwho: takes no arguments"; _devwho_usage; return 1 ;;
+  esac
+
   _devtools_scan
 
   if [ ${#_dt_rows[@]} -eq 0 ]; then
@@ -387,7 +410,24 @@ _devtools_confirm_others() {
   [ "$confirm" = "yes" ]
 }
 
+_devkill_usage() {
+  cat <<'USAGE'
+usage: devkill (or dkill) [port|project ...]
+  (none)    pick from a numbered list
+  5173      a port
+  my-app    a project, exact name as devwho shows it
+  all       all your dev servers
+  all!      + the other listeners, after a typed yes
+  -h        this help
+Several targets: devkill 5173 my-app. Tab completes ports and projects.
+USAGE
+}
 devkill() {
+  case "$1" in
+    -h|--help) _devkill_usage; return 0 ;;
+    -*) echo "devkill: unknown flag $1"; _devkill_usage; return 1 ;;
+  esac
+
   local target="$1"
 
   _devtools_scan
@@ -795,5 +835,12 @@ _devkill_complete() {
 }
 (( $+functions[compdef] )) && compdef _devkill_complete devkill
 
-# short names: dwho, dkill, dls, dview
-alias dwho=devwho dkill=devkill dls=devls dview=devview
+devhelp() {
+  _devwho_usage; echo
+  _devkill_usage; echo
+  _devls_usage; echo
+  _devview_usage
+}
+
+# short names: dwho, dkill, dls, dview, dhelp
+alias dwho=devwho dkill=devkill dls=devls dview=devview dhelp=devhelp
