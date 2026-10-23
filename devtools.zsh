@@ -17,11 +17,14 @@ devview() {
 # --- generic table renderer ---
 # reads: _dtt_headers, _dtt_align (l/r per column), _dtt_rows (cells joined
 # with $'\x1f'). Cells may carry ANSI colors; widths are measured without them.
+# _dtt_shrink ("col:head" / "col:tail", in order) names the columns that may be
+# cut with … when the table is wider than the window — a line that overflows
+# wraps its right border onto the next line and the whole table falls apart.
 _devtools_render_table() {
   setopt localoptions extendedglob
   local ncols=${#_dtt_headers[@]}
   local -a widths
-  local i row plain cell pad
+  local i row plain cell pad pre
   local -a cols
 
   for i in {1..$ncols}; do
@@ -33,6 +36,23 @@ _devtools_render_table() {
       plain=${cols[$i]//$'\e'\[[0-9;]#m/}
       [ ${#plain} -gt ${widths[$i]} ] && widths[$i]=${#plain}
     done
+  done
+
+  # 1 = left border; each column adds its padding and right border (3)
+  local total=1 over spec c cut min
+  local -A keep
+  for i in {1..$ncols}; do total=$(( total + widths[i] + 3 )); done
+  over=$(( total - ${COLUMNS:-80} ))
+  for spec in "${_dtt_shrink[@]}"; do
+    (( over > 0 )) || break
+    c=${spec%%:*}
+    min=$(( ${#_dtt_headers[$c]} > 6 ? ${#_dtt_headers[$c]} : 6 ))
+    cut=$(( widths[c] - min ))
+    (( cut > over )) && cut=$over
+    (( cut > 0 )) || continue
+    widths[$c]=$(( widths[c] - cut ))
+    over=$(( over - cut ))
+    keep[$c]=${spec#*:}
   done
 
   _dtt_border() {
@@ -53,6 +73,16 @@ _devtools_render_table() {
     for i in {1..$ncols}; do
       cell="${vals[$i]}"
       plain=${cell//$'\e'\[[0-9;]#m/}
+      if (( ${#plain} > widths[i] )); then
+        # keep the cell's leading color, if it has one
+        pre=${(M)cell##($'\e'\[[0-9;]#m)#}
+        if [ "${keep[$i]}" = "tail" ]; then
+          plain="…${plain[-$(( widths[i] - 1 )),-1]}"
+        else
+          plain="${plain[1,$(( widths[i] - 1 ))]}…"
+        fi
+        cell="${pre}${plain}${pre:+$_dt_reset}"
+      fi
       pad=$(( ${widths[$i]} - ${#plain} ))
       if [ "${_dtt_align[$i]}" = "r" ]; then
         printf " %*s%s │" "$pad" "" "$cell"
@@ -325,6 +355,7 @@ devwho() {
 
   _dtt_headers=("PORT" "PID" "TOOL" "PROJECT" "PATH" "URL")
   _dtt_align=(r r l l l l)
+  _dtt_shrink=(5:tail 4:head)   # deep subfolders end in the telling part
   _dtt_rows=()
 
   local row
@@ -720,6 +751,7 @@ devls() {
     _dtt_rows=("${trimmed[@]}")
   fi
 
+  _dtt_shrink=(1:head)
   _devtools_render_table_fit
 }
 
