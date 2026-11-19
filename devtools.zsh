@@ -221,7 +221,9 @@ _devtools_tool_self() {
 
   # node path/to/server.js → server.js ; ruby bin/rails → rails
   # node (npx remotion studio) → npx  — npm rewrites its title, ps wraps it in parens
-  name=$(print -r -- "$cmd" | awk '{for(i=2;i<=NF;i++){if($i !~ /^-/){gsub(/^\(|\)$/,"",$i); if($i=="")continue; n=split($i,a,"/"); print a[n]; exit}}}')
+  # node --require x/preflight.cjs --import y/loader.mjs server/index.ts → index.ts
+  #   (a preload flag's value is not the script; tsx runs every server this way)
+  name=$(print -r -- "$cmd" | awk '{for(i=2;i<=NF;i++){if($i ~ /^(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)$/){i++;continue} if($i !~ /^-/){gsub(/^\(|\)$/,"",$i); if($i=="")continue; n=split($i,a,"/"); print a[n]; exit}}}')
   [ -n "$name" ] && { print -r -- "$name"; return }
 
   print -r -- ""
@@ -254,27 +256,64 @@ _devtools_app_label() {
   print -r -- "$(ps -o comm= -p "$pid" 2>/dev/null | awk '{n=split($0,a,"/"); print a[n]}')"
 }
 
+# --- which of a process's ports is the one you'd open ---
+# Helper ports never are: the Vite/Nuxt hot-reload socket, the Node inspector
+# range, debugpy. Among the rest the lowest wins — app ports sit low (3000,
+# 5173, 8787), the extras a tool opens beside them sit high.
+_devtools_is_aux_port() {
+  local p="$1"
+  (( p == 24678 || p == 5678 || (p >= 9229 && p <= 9239) ))
+}
+
+# Returns via REPLY.
+_devtools_main_port() {
+  local p best="" lowest=""
+  for p in "$@"; do
+    if [ -z "$lowest" ] || (( p < lowest )); then lowest=$p; fi
+    _devtools_is_aux_port "$p" && continue
+    if [ -z "$best" ] || (( p < best )); then best=$p; fi
+  done
+  REPLY="${best:-$lowest}"
+}
+
 # --- shared helper: collect info about listening dev servers ---
+# One entry per process. A process can listen on several ports; the row leads
+# with the main one and keeps the rest, so the URL is the one that opens and
+# every port still answers to devkill.
 _devtools_scan() {
   _dt_rows=()
   _dt_ports=()
+  _dt_allports=()
   _dt_pids=()
   _dt_projects=()
   _dt_other=()
 
-  local -A seen_pids
-  local -a listeners
+  local -A pid_ports
+  local -a listeners pid_order ports extras
   listeners=("${(@f)$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk '{cmd=tolower($1)} cmd~/node|python|ruby|php|deno|bun|java|dotnet|beam.smp/ {
     n = split($(NF-1), a, ":"); if (a[n]+0 > 0) print a[n], $2
   }')}")
 
   local line port pid cwd project tool cur ppid cmd git_root subpath url exe self_tool
 
+  # group ports by process (lsof repeats a port once per address family)
   for line in "${listeners[@]}"; do
     port="${line%% *}"
     pid="${line##* }"
-    [ -z "$pid" ] || [ -n "${seen_pids[$pid]}" ] && continue
-    seen_pids[$pid]=1
+    [ -z "$pid" ] && continue
+    if [ -z "${pid_ports[$pid]}" ]; then
+      pid_order+=("$pid")
+      pid_ports[$pid]="$port"
+    elif [[ " ${pid_ports[$pid]} " != *" $port "* ]]; then
+      pid_ports[$pid]+=" $port"
+    fi
+  done
+
+  for pid in "${pid_order[@]}"; do
+    ports=(${(on)=pid_ports[$pid]})
+    _devtools_main_port "${ports[@]}"
+    port="$REPLY"
+    extras=(${ports:#$port})
 
     cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2 {print $NF}')
     exe=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | grep -m1 '^n/' | cut -c2-)
@@ -294,7 +333,7 @@ _devtools_scan() {
     fi
 
     if [ "$is_dev" -eq 0 ]; then
-      _dt_other+=("$port|$pid|$(_devtools_app_label "$pid" "$exe")")
+      _dt_other+=("${(j:,:)ports}|$pid|$(_devtools_app_label "$pid" "$exe")")
       continue
     fi
 
@@ -327,8 +366,9 @@ _devtools_scan() {
 
     url="http://localhost:$port"
 
-    _dt_rows+=("$port|$pid|$tool|$project|$subpath|$url")
+    _dt_rows+=("$port|$pid|$tool|$project|$subpath|$url|${(j: :)extras}")
     _dt_ports+=("$port")
+    _dt_allports+=(",${(j:,:)ports},")
     _dt_pids+=("$pid")
     _dt_projects+=("$project")
   done
@@ -385,7 +425,9 @@ devwho() {
   local -a cols
   for row in "${_dt_rows[@]}"; do
     cols=("${(@s/|/)row}")
-    _dtt_rows+=("${(pj/\x1f/)cols}")
+    # a process's other ports ride along, dimmed: http://localhost:4747 +24678
+    [ -n "${cols[7]}" ] && cols[6]+=" ${_dt_dim}+${cols[7]// / +}${_dt_reset}"
+    _dtt_rows+=("${(pj/\x1f/)cols[1,6]}")
   done
 
   _devtools_render_table_fit
@@ -414,7 +456,7 @@ _devkill_usage() {
   cat <<'USAGE'
 usage: devkill (or dkill) [port|project ...]
   (none)    pick from a numbered list
-  5173      a port
+  5173      a port (any port the server listens on)
   my-app    a project, exact name as devwho shows it
   all       all your dev servers
   all!      + the other listeners, after a typed yes
@@ -456,7 +498,7 @@ devkill() {
     for idx in {1..${#_dt_rows[@]}}; do
       local -a cols
       cols=("${(@s/|/)_dt_rows[$idx]}")
-      echo "  $idx) :${cols[1]}  ${cols[4]}  (${cols[3]}, pid ${cols[2]})"
+      echo "  $idx) :${cols[1]}${cols[7]:+ +${cols[7]// / +}}  ${cols[4]}  (${cols[3]}, pid ${cols[2]})"
     done
     echo
     if [ ${#_dt_other[@]} -gt 0 ]; then
@@ -478,14 +520,15 @@ devkill() {
       return 1
     fi
   else
-    # one or more targets, each an exact port or project name
+    # one or more targets, each an exact project name or a port (any port the
+    # server listens on, not just the one its row leads with)
     local -A picked
     local t hit missed=0 other
 
     for t in "$@"; do
       hit=0
       for (( idx = 1; idx <= ${#_dt_rows}; idx++ )); do
-        if [ "${_dt_ports[$idx]}" = "$t" ] || [ "${_dt_projects[$idx]}" = "$t" ]; then
+        if [[ "${_dt_allports[$idx]}" == *",${t},"* ]] || [ "${_dt_projects[$idx]}" = "$t" ]; then
           hit=1
           [ -n "${picked[$idx]}" ] && continue
           picked[$idx]=1
@@ -500,7 +543,7 @@ devkill() {
       other=0
       for entry in "${_dt_other[@]}"; do
         ocols=("${(@s/|/)entry}")
-        if [ "${ocols[1]}" = "$t" ]; then
+        if [[ ",${ocols[1]}," == *",${t},"* ]]; then
           echo ":$t is ${ocols[3]} (pid ${ocols[2]}), not a project dev server."
           echo "Kill it yourself if you mean to: kill ${ocols[2]}"
           other=1
