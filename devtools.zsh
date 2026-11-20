@@ -421,12 +421,24 @@ devwho() {
   _dtt_shrink=(5:tail 4:head)   # deep subfolders end in the telling part
   _dtt_rows=()
 
-  local row
+  local row p links helpers
   local -a cols
   for row in "${_dt_rows[@]}"; do
     cols=("${(@s/|/)row}")
-    # a process's other ports ride along, dimmed: http://localhost:4747 +24678
-    [ -n "${cols[7]}" ] && cols[6]+=" ${_dt_dim}+${cols[7]// / +}${_dt_reset}"
+    # a process's other ports ride along after the URL. One you might open
+    # (an API or admin page beside the app) gets a URL of its own, so the
+    # terminal links it too; a helper port (hot-reload socket, inspector)
+    # opens nothing and stays a dimmed +port:
+    #   http://localhost:3000 http://localhost:3001 +24678
+    links="" helpers=""
+    for p in ${=cols[7]}; do
+      if _devtools_is_aux_port "$p"; then
+        helpers+=" +$p"
+      else
+        links+=" http://localhost:$p"
+      fi
+    done
+    cols[6]+="$links${helpers:+ ${_dt_dim}${helpers# }${_dt_reset}}"
     _dtt_rows+=("${(pj/\x1f/)cols[1,6]}")
   done
 
